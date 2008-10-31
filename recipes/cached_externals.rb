@@ -62,6 +62,44 @@ namespace :externals do
       end
     end
   end
+  
+  task :update_config_from_git_submodules, :except => { :no_release => true } do
+    desc <<-DESC
+      Updates config/externals.yml from your current git submodules. You will 
+      need to manually add any plugins you pulled in via svn.
+      Requires git v1.6, which adds "git-submodule foreach".
+      Currently assumes git is in your path.
+    DESC
+    require 'capistrano/recipes/deploy/scm'
+    
+    # assumes git is on your path; can't figure out how to get configuration vars in here
+    git_command = 'git'
+
+    raise "Requires git version 1.6" if ! (`#{git_command} --version` =~ /1\.6/ ) # a bit fragile
+
+    submodule_text = `#{git_command} submodule`
+    submodule_text.each_line do |line|
+      vars = line.match(/(.)([0-9a-f]{40}) ([^\s]*)( \(([^)]*))?/ )
+      raise "Error parsing git submodules" if ! vars
+      if vars[1] != ' '
+        puts "Submodule #{vars[3]} is out of sync with your main repository" if vars[1] == '+'
+        puts "Submodule #{vars[3]} is not initialized" if vars[1] == '-'
+      end
+      external_modules[vars[3]] = {:type => 'git',:revision => vars[2]}
+    end
+
+    submodule_urls = `#{git_command} submodule --quiet foreach 'echo $path \`#{git_command} config --get remote.origin.url\`'`
+  
+    submodule_urls.each_line do |line|
+      vars = line.split(' ')
+      external_modules[vars[0]][:repository] = vars[1]
+    end
+    File.open( 'config/externals.yml', 'w' ) do |out|
+       YAML.dump( external_modules, out )
+    end
+    puts external_modules.to_yaml
+  end
+  
 end
 
 # Need to do this before finalize_update, instead of after update_code,
@@ -72,3 +110,5 @@ end
 # fail and leaving some assets temporally out of sync, potentially, with
 # the other servers.
 before "deploy:finalize_update", "externals:setup"
+
+
